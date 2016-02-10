@@ -4,7 +4,7 @@
 
 Conference Central Application is a cloud-based API server to support a provided
 conference organization application that exists on the web as well as a native
-iOS application.The application can be extended to support more applications too.
+iOS and Android applications too.
 The API supports the following functionality found within the app: user
 authentication, user profiles, conference information and various manners in which
 to query the data.

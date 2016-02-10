@@ -31,7 +31,6 @@ class Session(ndb.Model):
     typeOfSession           = ndb.StringProperty(repeated=True)
     date                    = ndb.DateProperty()
     startTime               = ndb.TimeProperty()
-    organizerUserId         = ndb.StringProperty()
 
 class SessionForm(messages.Message):
     """SessionForm -- Session outbound form message"""
@@ -52,7 +51,8 @@ class SessionForms(messages.Message):
 class SpeakerForm(messages.Message):
     """SpeakerForm -- Speaker outbound form message"""
     speaker                 = messages.StringField(1)
-    sessionNames            = messages.StringField(2, repeated=True)
+    speaker_sessions        = messages.StringField(2, repeated=True)
+    conference_key          = messages.StringField(3)
 
 class Profile(ndb.Model):
     """Profile -- User profile object"""

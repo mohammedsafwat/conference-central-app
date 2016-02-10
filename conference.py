@@ -96,6 +96,7 @@ WISHLIST_POST_REQUEST = endpoints.ResourceContainer(
 )
 
 MEMCACHE_ANNOUNCEMENTS_KEY = "RECENT_ANNOUNCEMENTS"
+FEATURED_SPEAKER_KEY = "FEATURED_SPEAKER"
 ANNOUNCEMENT_TPL = ('Last chance to attend! The following conferences '
                     'are nearly sold out: %s')
 
@@ -252,6 +253,7 @@ class ConferenceApi(remote.Service):
 
         # create Conference & return (modified) ConferenceForm
         Conference(**data).put()
+
         taskqueue.add(params={'email': user.email(), 'conferenceInfo': repr(request)},
                         url='/tasks/send_confirmation_email')
         return request
@@ -488,7 +490,7 @@ class ConferenceApi(remote.Service):
                 key: %s' % request.websafeConferenceKey)
 
         # create ancestor query for all key matches for this conference
-        sessions = Session.query(ancestor=ndb.Key(Conference, conf.key.id()))
+        sessions = Session.query(ancestor=ndb.Key(urlsafe=request.websafeConferenceKey))
 
         # return set of SessionForm objects per Session
         return SessionForms(
@@ -502,8 +504,10 @@ class ConferenceApi(remote.Service):
         """Get all sessions with a specific type from a specific conference"""
 
         # copy ConferenceForm/ProtoRPC Message into dict
-        data = {field.name: getattr(request, field.name) for field in request.all_fields()}
-        typeOfSession = data['typeOfSession']
+
+        #data = {field.name: getattr(request, field.name) for field in request.all_fields()}
+        #typeOfSession = data['typeOfSession']
+        typeOfSession = getattr(request, 'typeOfSession')
 
         # fetch existing conference
         conf = ndb.Key(urlsafe=request.websafeConferenceKey).get()
@@ -515,7 +519,7 @@ class ConferenceApi(remote.Service):
 
         # create ancestor query for all key matches for this conference
         sessions = Session.query(Session.typeOfSession == typeOfSession,
-            ancestor=ndb.Key(Conference, conf.key.id()))
+            ancestor=ndb.Key(urlsafe=request.websafeConferenceKey))
 
         # return set of ConferenceForm objects per conference
         return SessionForms(
@@ -556,7 +560,7 @@ class ConferenceApi(remote.Service):
 
             # get all sessions for each conference and filter them to get
             # sessions with date equals today's date
-            sessions = Session.query(ancestor=ndb.Key(Conference, conf.key.id()))\
+            sessions = Session.query(ancestor=ndb.Key(urlsafe=request.websafeConferenceKey))\
                 .filter(Session.date > datetime.today() - timedelta(days=1)).filter(Session.date < datetime.today() + timedelta(days=1))
             for session in sessions:
                 today_sessions.append(session)
@@ -566,7 +570,7 @@ class ConferenceApi(remote.Service):
         )
 
     @endpoints.method(SPEAKER_GET_REQUEST, SessionForms,
-        path='sessions/{speaker}', http_method='GET', name='getSessionsBySpeaker')
+        path='getSessionsBySpeaker', http_method='GET', name='getSessionsBySpeaker')
     def getSessionsBySpeaker(self, request):
         """Return all sessions given by a certain speaker, across all conferences"""
         data = {field.name: getattr(request, field.name) for field in request.all_fields()}
@@ -580,14 +584,14 @@ class ConferenceApi(remote.Service):
             items=[self._copySessionToForm(session) for session in sessions]
         )
 
-    @endpoints.method(SessionForm, SessionForm, path='sessions', http_method='POST',
+    @endpoints.method(SessionForm, SessionForm, path='createSession', http_method='POST',
         name='createSession')
     def createSession(self, request):
         """The organizer of the conference can use this method to create a session"""
         return self._createSessionObject(request)
 
-    @endpoints.method(WISHLIST_POST_REQUEST, SessionForm, http_method='POST',
-                        name='addSessionToWishlist')
+    @endpoints.method(WISHLIST_POST_REQUEST, SessionForm, path='profile/wishlist',
+        http_method='POST', name='addSessionToWishlist')
     def addSessionToWishList(self, request):
         """Saves a session to a user's wishlist"""
         user = endpoints.get_current_user()
@@ -616,8 +620,8 @@ class ConferenceApi(remote.Service):
 
         return self._copySessionToForm(session)
 
-    @endpoints.method(WISHLIST_POST_REQUEST, BooleanMessage, http_method='DELETE',
-                            name='deleteSessionInWishlist')
+    @endpoints.method(WISHLIST_POST_REQUEST, BooleanMessage, path='profile/wishlist',
+        http_method='DELETE', name='deleteSessionInWishlist')
     def deleteSessionInWishList(self, request):
         """Delete a session from a user's wishlist"""
         retval = None
@@ -645,8 +649,8 @@ class ConferenceApi(remote.Service):
 
         return BooleanMessage(data=retval)
 
-    @endpoints.method(message_types.VoidMessage, SessionForms, http_method='POST',
-        name='getSessionsInWishlist')
+    @endpoints.method(message_types.VoidMessage, SessionForms, path='profile/wishlist',
+        http_method='GET', name='getSessionsInWishlist')
     def getSessionsInWishlist(self, request):
         """Return a user's wishlist of sessions"""
         # preload necessary data items
@@ -681,40 +685,6 @@ class ConferenceApi(remote.Service):
             items=[self._copySessionToForm(session) for session in filtered_sessions]
         )
 
-    @endpoints.method(message_types.VoidMessage, SpeakerForm, http_method='GET',
-        name='getFeaturedSpeaker')
-    def getFeaturedSpeaker(self, request):
-        """Returns the sessions of the featured speaker"""
-        # get data from memcache
-        data = memcache.get('featured_speaker')
-
-        sessions = []
-        sessionNames = []
-        speaker = None
-
-        # if data exists and has keys for 'speaker' and 'sessionNames'
-        # then get the 'speaker' and 'sessionNames' values
-        if data and data.has_key('speaker') and data.has_key('sessionNames'):
-            speaker = data['speaker']
-            sessionNames = data['sessionNames']
-        else:
-            # if data does not exist or keys do not exist, then get the data of
-            #the next upcoming session to return it
-            upcoming_session = Session.query(Session.date >= datetime.now())\
-                                .order(Session.date, Session.startTime).get()
-            if upcoming_session:
-                speaker = upcoming_session.speaker
-                sessions = Session.query(Session.speaker == speaker)
-                sessionNames = [session.name for session in sessions]
-
-        speaker_form = SpeakerForm()
-        for field in speaker_form.all_fields():
-            if field.name == 'sessionNames':
-                setattr(speaker_form, field.name, sessionNames)
-            elif field.name == 'speaker':
-                setattr(speaker_form, field.name, speaker)
-        speaker_form.check_initialized()
-        return speaker_form
 
 # - - - Session objects  - - - - - - - - - - - - - - - - - - - -
 
@@ -767,7 +737,7 @@ class ConferenceApi(remote.Service):
         if data['startTime']:
             data['startTime'] = datetime.strptime(data['startTime'][:5], "%H:%M").time()
 
-        parent_key = ndb.Key(Conference, conf.key.id())
+        parent_key = ndb.Key(urlsafe=request.websafeConferenceKey)
         child_id = Session.allocate_ids(size=1, parent=parent_key)[0]
         child_key = ndb.Key(Session, child_id, parent=parent_key)
         data['key'] = child_key
@@ -780,15 +750,17 @@ class ConferenceApi(remote.Service):
         # When a new session is added to a conference, check the speaker.
         # If there is more than one session by this speaker at this conference,
         # add a new Memcache entry that features the speaker and session names.
-        sessions = Session.query(Session.speaker == data['speaker'], ancestor=parent_key)
-        if len(list(sessions)) > 1:
-            cache_data = {}
-            cache_data['speaker'] = data['speaker']
-            cache_data['sessionNames'] = [session.name for session in sessions]
-
-            memcache.set('featured_speaker', cache_data)
-
-        return request
+        speaker = data['speaker']
+        speaker_sessions = Session.query(Session.speaker == data['speaker'], ancestor=parent_key)
+        if len(list(speaker_sessions)) > 1:
+            taskqueue.add(
+                params  = {'speaker': speaker,
+                           'speaker_sessions': speaker_sessions,
+                           'conference_key': request.websafeConferenceKey},
+                url     = '/tasks/set_featured_speaker',
+                method  = 'GET'
+            )
+        return self._copySessionToForm(child_key.get())
 
 # - - - Announcements - - - - - - - - - - - - - - - - - - - -
 
@@ -823,5 +795,61 @@ class ConferenceApi(remote.Service):
     def getAnnouncement(self, request):
         """Return announcement from memcache"""
         return StringMessage(data=memcache.get(MEMCACHE_ANNOUNCEMENTS_KEY) or "")
+
+# - - - Featured Speaker - - - - - - - - - - - - - - - - - - - -
+
+    @staticmethod
+    def _cacheFeaturedSpeaker(self, speaker, speaker_sessions, conference_key):
+        """
+        Cache speaker data and the Sessions of this speaker if he is a
+        featured one (has more than one session)
+        """
+        cache_data = {}
+        cache_data['speaker'] = speaker
+        cache_data['speaker_sessions'] = [session.name for session in speaker_sessions]
+        cache_data['conference_key'] = conference_key
+        memcache.set(FEATURED_SPEAKER_KEY, cache_data)
+
+    @endpoints.method(message_types.VoidMessage, SpeakerForm,
+                        path='conference/featured_speaker/get',
+                        http_method='GET', name='getFeaturedSpeaker')
+    def getFeaturedSpeaker(self, request):
+        """Return featured speaker info from memcache"""
+        # get data from memcache
+        data = memcache.get(FEATURED_SPEAKER_KEY)
+
+        sessions = []
+        speaker_sessions = []
+        speaker = None
+        conference_key = None
+
+        # if data exists and has keys for 'speaker', 'speaker_sessions'
+        # and 'conference_key' then get the 'speaker' & 'speaker_sessions' values
+
+        if data and data.has_key('speaker') and data.has_key('speaker_sessions') and data.has_key('conference_key'):
+            speaker = data['speaker']
+            speaker_sessions = data['speaker_sessions']
+            conference_key = data['conference_key']
+        else:
+            # if data does not exist or keys do not exist, then get the data of
+            #the next upcoming session to return it
+            upcoming_session = Session.query(Session.date >= datetime.now())\
+                                .order(Session.date, Session.startTime).get()
+            if upcoming_session:
+                speaker = upcoming_session.speaker
+                sessions = Session.query(Session.speaker == speaker)
+                speaker_sessions = [session.name for session in sessions]
+
+        speaker_form = SpeakerForm()
+        for field in speaker_form.all_fields():
+            if field.name == 'speaker_sessions':
+                setattr(speaker_form, field.name, speaker_sessions)
+            elif field.name == 'speaker':
+                setattr(speaker_form, field.name, speaker_sessions)
+            elif field.name == 'conference_key':
+                setattr(speaker_form, field.name, conference_key)
+        speaker_form.check_initialized()
+        return speaker_form
+
 # registers API
 api = endpoints.api_server([ConferenceApi])
