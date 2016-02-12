@@ -43,7 +43,6 @@ class SetFeaturedSpeakerHandler(webapp2.RequestHandler):
         """Set Featured Speaker in Memcache"""
         ConferenceApi._cacheFeaturedSpeaker(
             self.request.get('speaker'),
-            self.request.get('speaker_sessions'),
             self.request.get('conference_key')
         )
         self.response.set_status(204)
